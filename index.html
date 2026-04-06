@@ -533,6 +533,16 @@ async function bootApp(token) {
   initLogNav();
   populateExerciseDropdown();
   renderWorkouts();
+  // Wire up builder add-program button after sign-in
+  document.getElementById('builder-add-program').addEventListener('click', () => {
+    if (programs.length >= 5) { showToast('Max 5 programs'); return; }
+    const newId = 'prog_' + Date.now();
+    programs.push({ id: newId, name: 'New Program', sub: '', days: [
+      { key: 'day_' + Date.now(), label: 'Day 1', exercises: [] }
+    ]});
+    builderEditingDay = null;
+    savePrograms(); initLogNav(); renderBuilder();
+  });
 }
 
 async function handleGoogleSignIn(response) {
@@ -1809,15 +1819,7 @@ function buildExerciseEditor(prog, day, ex, ei) {
   return wrap;
 }
 
-document.getElementById('builder-add-program').addEventListener('click', () => {
-  if (programs.length >= 5) { showToast('Max 5 programs'); return; }
-  const newId = 'prog_' + Date.now();
-  programs.push({ id: newId, name: 'New Program', sub: '', days: [
-    { key: 'day_' + Date.now(), label: 'Day 1', exercises: [] }
-  ]});
-  builderEditingDay = null;
-  savePrograms(); initLogNav(); renderBuilder();
-});
+// builder-add-program listener moved into bootApp()
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 // All init happens inside handleGoogleSignIn after Drive data loads
