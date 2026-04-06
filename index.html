@@ -599,13 +599,20 @@ async function findOrCreateDriveFile() {
   driveFileId = created.id;
 }
 
-async function loadFromDrive() {
+async function loadFromDrive(isRetry = false) {
   try {
     await findOrCreateDriveFile();
     const res = await fetch(
       `https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
+    if (res.status === 401 && !isRetry) {
+      const ok = await refreshToken();
+      if (ok) { await loadFromDrive(true); return; }
+      setSyncStatus('error', 'Session expired');
+      showSyncErrorBanner();
+      return;
+    }
     if (res.ok) {
       const text = await res.text();
       if (text && text.trim()) driveCache = JSON.parse(text);
@@ -617,11 +624,31 @@ async function loadFromDrive() {
   }
 }
 
-async function saveToDrive() {
+async function refreshToken() {
+  return new Promise((resolve) => {
+    const client = google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: SCOPES,
+      prompt: '',
+      callback: (tokenResponse) => {
+        if (tokenResponse.error || !tokenResponse.access_token) {
+          resolve(false); return;
+        }
+        const expiresIn = (tokenResponse.expires_in || 3600) * 1000;
+        saveSession(tokenResponse.access_token, Date.now() + expiresIn - 60000);
+        accessToken = tokenResponse.access_token;
+        resolve(true);
+      }
+    });
+    client.requestAccessToken({ prompt: '' });
+  });
+}
+
+async function saveToDrive(isRetry = false) {
   if (!accessToken || !driveFileId) return;
   setSyncStatus('syncing', 'Saving...');
   try {
-    await fetch(
+    const res = await fetch(
       `https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`,
       {
         method: 'PATCH',
@@ -629,19 +656,54 @@ async function saveToDrive() {
         body: JSON.stringify(driveCache)
       }
     );
+    if (res.status === 401 && !isRetry) {
+      setSyncStatus('syncing', 'Reconnecting...');
+      const ok = await refreshToken();
+      if (ok) { await saveToDrive(true); return; }
+      setSyncStatus('error', 'Session expired');
+      showSyncErrorBanner();
+      return;
+    }
     setSyncStatus('synced', 'Saved ✓');
   } catch(err) {
     console.error('Drive save error:', err);
-    setSyncStatus('error', 'Save failed — tap to retry');
+    if (!isRetry) {
+      const ok = await refreshToken();
+      if (ok) { await saveToDrive(true); return; }
+    }
+    setSyncStatus('error', 'Save failed');
+    showSyncErrorBanner();
   }
 }
 
-function scheduleSave() {
-  clearTimeout(syncTimeout);
-  setSyncStatus('syncing', 'Saving...');
-  syncTimeout = setTimeout(saveToDrive, 1500);
-}
+// Proactively refresh token every minute before it expires
+setInterval(async () => {
+  if (!accessToken) return;
+  const expiry = parseInt(localStorage.getItem('gd_token_expiry') || '0');
+  if (Date.now() > expiry - 120000) {
+    await refreshToken();
+  }
+}, 60000);
 
+function showSyncErrorBanner() {
+  const el = document.getElementById('sync-status');
+  el.style.cursor = 'pointer';
+  el.title = 'Tap to reconnect';
+  el.onclick = async () => {
+    el.style.cursor = '';
+    el.title = '';
+    el.onclick = null;
+    setSyncStatus('syncing', 'Reconnecting...');
+    const ok = await refreshToken();
+    if (ok) {
+      setSyncStatus('synced', 'Reconnected ✓');
+      scheduleSave();
+    } else {
+      setSyncStatus('error', 'Tap to reconnect');
+      showSyncErrorBanner();
+    }
+  };
+}
 // ─── DEFAULT WORKOUT DATA ────────────────────────────────────────────────────
 const DEFAULT_PROGRAMS = [
   { id: 'full', name: 'Full', sub: '1 hour', days: [
