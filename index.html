@@ -657,6 +657,7 @@ async function saveToDrive(isRetry = false) {
       }
     );
     if (res.status === 401 && !isRetry) {
+      // Token expired — refresh silently and retry once
       setSyncStatus('syncing', 'Reconnecting...');
       const ok = await refreshToken();
       if (ok) { await saveToDrive(true); return; }
@@ -676,16 +677,17 @@ async function saveToDrive(isRetry = false) {
   }
 }
 
-// Proactively refresh token every minute before it expires
+// Also refresh token proactively every 45 minutes while app is open
 setInterval(async () => {
   if (!accessToken) return;
   const expiry = parseInt(localStorage.getItem('gd_token_expiry') || '0');
-  if (Date.now() > expiry - 120000) {
+  if (Date.now() > expiry - 120000) { // refresh 2 min before expiry
     await refreshToken();
   }
-}, 60000);
+}, 60000); // check every minute
 
 function showSyncErrorBanner() {
+  // Make the sync status badge clickable to manually reconnect
   const el = document.getElementById('sync-status');
   el.style.cursor = 'pointer';
   el.title = 'Tap to reconnect';
@@ -704,6 +706,13 @@ function showSyncErrorBanner() {
     }
   };
 }
+
+function scheduleSave() {
+  clearTimeout(syncTimeout);
+  setSyncStatus('syncing', 'Saving...');
+  syncTimeout = setTimeout(saveToDrive, 1500);
+}
+
 // ─── DEFAULT WORKOUT DATA ────────────────────────────────────────────────────
 const DEFAULT_PROGRAMS = [
   { id: 'full', name: 'Full', sub: '1 hour', days: [
