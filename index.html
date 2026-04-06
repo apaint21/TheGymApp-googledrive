@@ -567,16 +567,25 @@ function trySilentRestore() {
     bootApp(savedToken);
     return;
   }
-  // Try silent token refresh via Google (no popup, no redirect)
-  // This works if the user has previously consented
-  if (typeof google !== 'undefined' && google.accounts) {
+  // Try silent token refresh — works if user has previously consented on this device
+  if (typeof google !== 'undefined' && google.accounts && google.accounts.oauth2) {
+    let responded = false;
+    // Fallback: if GSI doesn't call back within 3s, show login screen
+    const fallbackTimer = setTimeout(() => {
+      if (!responded) {
+        responded = true;
+        document.getElementById('login-screen').style.display = 'flex';
+      }
+    }, 3000);
     const client = google.accounts.oauth2.initTokenClient({
       client_id: CLIENT_ID,
       scope: SCOPES,
       prompt: '',
       callback: async (tokenResponse) => {
+        if (responded) return;
+        responded = true;
+        clearTimeout(fallbackTimer);
         if (tokenResponse.error || !tokenResponse.access_token) {
-          // Silent refresh failed — show login screen
           document.getElementById('login-screen').style.display = 'flex';
           return;
         }
@@ -585,7 +594,12 @@ function trySilentRestore() {
         await bootApp(tokenResponse.access_token);
       }
     });
-    client.requestAccessToken({ prompt: '' });
+    try {
+      client.requestAccessToken({ prompt: '' });
+    } catch(e) {
+      clearTimeout(fallbackTimer);
+      document.getElementById('login-screen').style.display = 'flex';
+    }
   } else {
     document.getElementById('login-screen').style.display = 'flex';
   }
@@ -623,14 +637,26 @@ async function loadFromDrive(isRetry = false) {
       showSyncErrorBanner();
       return;
     }
+    // 204 = file exists but is empty (first time on new device) — that's fine
+    if (res.status === 204 || res.status === 404) {
+      setSyncStatus('synced', 'Synced ✓');
+      return;
+    }
     if (res.ok) {
       const text = await res.text();
-      if (text && text.trim()) driveCache = JSON.parse(text);
+      if (text && text.trim()) {
+        try {
+          driveCache = JSON.parse(text);
+        } catch(parseErr) {
+          console.error('Drive JSON parse error:', parseErr);
+        }
+      }
     }
     setSyncStatus('synced', 'Synced ✓');
   } catch(err) {
     console.error('Drive load error:', err);
     setSyncStatus('error', 'Load failed');
+    showSyncErrorBanner();
   }
 }
 
