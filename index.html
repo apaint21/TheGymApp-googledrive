@@ -560,17 +560,27 @@ async function handleGoogleSignIn(response) {
 }
 
 // Try to restore session silently on load (fixes home screen shortcut loop)
+// Detect if running as installed home screen shortcut (standalone PWA mode)
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+
 function trySilentRestore() {
   const savedToken = getSavedToken();
   if (savedToken) {
-    // Token still valid — boot straight in
+    // Token still valid — boot straight in, no popup needed
     bootApp(savedToken);
     return;
   }
-  // Try silent token refresh — works if user has previously consented on this device
+
+  // In standalone mode, popups are blocked — can't do interactive sign-in
+  // Show a special message directing user to sign in via browser first
+  if (isStandalone) {
+    showStandaloneLoginPrompt();
+    return;
+  }
+
+  // Normal browser — try silent token refresh
   if (typeof google !== 'undefined' && google.accounts && google.accounts.oauth2) {
     let responded = false;
-    // Fallback: if GSI doesn't call back within 3s, show login screen
     const fallbackTimer = setTimeout(() => {
       if (!responded) {
         responded = true;
@@ -603,6 +613,31 @@ function trySilentRestore() {
   } else {
     document.getElementById('login-screen').style.display = 'flex';
   }
+}
+
+function showStandaloneLoginPrompt() {
+  const screen = document.getElementById('login-screen');
+  screen.style.display = 'flex';
+  // Replace the sign-in button area with a helpful message
+  screen.innerHTML = `
+    <div class="login-icon">💪</div>
+    <h2>Lets Go!</h2>
+    <p style="color:var(--text2);font-size:0.95rem;max-width:300px;line-height:1.6;">
+      To use this shortcut, you need to sign in through your browser first.
+    </p>
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:16px 20px;max-width:300px;text-align:left;margin-top:4px;">
+      <div style="font-size:0.8rem;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">One-time setup</div>
+      <div style="font-size:0.88rem;color:var(--text);line-height:1.8;">
+        1️⃣ Open this link in <strong>Safari</strong><br>
+        2️⃣ Sign in with Google<br>
+        3️⃣ Come back to this shortcut
+      </div>
+    </div>
+    <button onclick="window.open(window.location.href, '_blank')" style="margin-top:8px;padding:13px 24px;background:var(--accent);color:#0d0d0f;border:none;border-radius:10px;font-family:'Bebas Neue',sans-serif;font-size:1.1rem;letter-spacing:2px;cursor:pointer;">
+      Open in Browser
+    </button>
+    <p style="font-size:0.75rem;color:var(--text3);margin-top:4px">After signing in, return here and it will work automatically</p>
+  `;
 }
 
 async function findOrCreateDriveFile() {
